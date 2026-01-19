@@ -1,145 +1,92 @@
-from http.server import BaseHTTPRequestHandler
-import os
-import json
-import logging
+import time
 import requests
+import threading
 from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import os
 
-# ================= SETUP LOGGING =================
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("DiscordCountdown")
+# ================= CẤU HÌNH =================
+# Lấy token từ biến môi trường (Cài đặt sau trên Render)
+TOKEN = os.environ.get("DISCORD_TOKEN")
+TARGET_STR = "April, 03 2026 at 08:30 PM"
+DATE_FORMAT = "%B, %d %Y at %I:%M %p"
+# ============================================
 
-# ================= CONFIGURATION =================
-@dataclass
-class AppConfig:
-    DISCORD_TOKEN: str
-    TARGET_DATE_STR: str
-    DATE_FORMAT: str = "%B, %d %Y at %I:%M %p"
-    TIMEZONE_OFFSET: int = 7  # UTC+7 for Vietnam
-
-    @property
-    def target_date(self) -> datetime:
-        vn_tz = timezone(timedelta(hours=self.TIMEZONE_OFFSET))
-        try:
-            dt_naive = datetime.strptime(self.TARGET_DATE_STR, self.DATE_FORMAT)
-            return dt_naive.replace(tzinfo=vn_tz)
-        except ValueError as e:
-            logger.error(f"Date format config error: {e}")
-            raise
-
-# Load config from Environment for Security
-config = AppConfig(
-    DISCORD_TOKEN=os.environ.get("DISCORD_TOKEN", ""),
-    TARGET_DATE_STR="April, 03 2026 at 08:30 PM"
-)
-
-# ================= DOMAIN LOGIC =================
-class TimeManager:
-    """Chuyên trách xử lý tính toán thời gian"""
-    
-    @staticmethod
-    def get_current_time(offset: int) -> datetime:
-        return datetime.now(timezone(timedelta(hours=offset)))
-
-    @staticmethod
-    def calculate_remaining(target: datetime, now: datetime) -> Tuple[bool, str, str]:
-        """
-        Trả về: (is_expired, status_text, emoji)
-        """
-        delta = target - now
-        total_seconds = delta.total_seconds()
-
-        if total_seconds <= 0:
-            return True, "Sự kiện đã diễn ra! 🎉", "🎉"
-
-        days = delta.days
-        hours = delta.seconds // 3600
-        minutes = (delta.seconds % 3600) // 60
+def get_countdown():
+    vn_tz = timezone(timedelta(hours=7))
+    now = datetime.now(vn_tz)
+    try:
+        target = datetime.strptime(TARGET_STR, DATE_FORMAT).replace(tzinfo=vn_tz)
+    except:
+        return "Lỗi định dạng ngày", "⚠️"
         
-        # Logic chọn Emoji thông minh dựa trên thời gian còn lại
-        if days > 30:
-            emoji = "🗓️" # Còn xa
-        elif days > 7:
-            emoji = "⏳" # Đang đếm ngược
-        elif days > 0:
-            emoji = "🔥" # Sắp tới
-        else:
-            emoji = "🚨" # Khẩn cấp (< 24h)
-
-        # Format text gọn gàng
-        if days > 0:
-            text = f"Còn {days}d {hours}h {minutes}m"
-        else:
-            text = f"Chỉ còn {hours}h {minutes}m!"
-
-        return False, text, emoji
-
-# ================= INFRASTRUCTURE LAYER =================
-class DiscordClient:
-    """Chuyên trách giao tiếp với Discord API"""
+    delta = target - now
     
-    API_URL = "https://discord.com/api/v9/users/@me/settings"
+    if delta.total_seconds() <= 0:
+        return "Sự kiện đã bắt đầu!", "🎉"
 
-    def __init__(self, token: str):
-        self.headers = {
-            "Authorization": token,
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (VercelCronBot/1.0)"
+    days = delta.days
+    seconds = delta.seconds
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    
+    # Logic Emoji
+    if days > 30: emoji = "🗓️"
+    elif days > 7: emoji = "⏳"
+    elif days > 0: emoji = "🔥"
+    else: emoji = "🚨"
+    
+    return f"Còn {days}d {hours}h {minutes}m", emoji
+
+def update_discord():
+    while True:
+        if not TOKEN:
+            print("Chưa có Token!")
+            time.sleep(60)
+            continue
+
+        text, emoji = get_countdown()
+        
+        url = "https://discord.com/api/v9/users/@me/settings"
+        headers = {
+            "Authorization": TOKEN,
+            "Content-Type": "application/json"
         }
-
-    def update_status(self, text: str, emoji: str) -> bool:
-        if not self.headers["Authorization"]:
-            logger.error("Missing Discord Token")
-            return False
-
+        # Thêm status: dnd để ép online
         payload = {
-            "status": "dnd",
-            "custom_status": {
-                "text": text,
-                "emoji_name": emoji
-            }
+            "status": "dnd", 
+            "custom_status": {"text": text, "emoji_name": emoji}
         }
         
-        # Chỉ update status text, giữ nguyên trạng thái Online/DND nếu muốn
-        # Hoặc thêm "status": "dnd" vào payload nếu muốn force DND
-
         try:
-            response = requests.patch(self.API_URL, headers=self.headers, json=payload)
-            response.raise_for_status()
-            logger.info(f"Updated status: [{emoji}] {text}")
-            return True
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Discord API Error: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                logger.error(f"Response: {e.response.text}")
-            return False
+            r = requests.patch(url, headers=headers, json=payload)
+            if r.status_code == 200:
+                print(f"Updated: {text}")
+            else:
+                print(f"Error {r.status_code}: {r.text}")
+        except Exception as e:
+            print(f"Lỗi mạng: {e}")
+            
+        # Chờ 60 giây (để tránh bị Discord khóa mõm vì spam)
+        time.sleep(60)
 
-# ================= VERCEL HANDLER =================
-class handler(BaseHTTPRequestHandler):
-    """Entry point cho Vercel Serverless Function"""
-    
+# ================= SERVER GIẢ (Để Render không tắt App) =================
+class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        # 1. Init Dependencies
-        time_mgr = TimeManager()
-        discord = DiscordClient(config.DISCORD_TOKEN)
-        
-        # 2. Process Logic
-        now = time_mgr.get_current_time(config.TIMEZONE_OFFSET)
-        is_expired, text, emoji = time_mgr.calculate_remaining(config.target_date, now)
-        
-        # 3. Execute Side Effect (API Call)
-        success = discord.update_status(text, emoji)
-
-        # 4. Return Response to Vercel System
-        self.send_response(200 if success else 500)
-        self.send_header('Content-type', 'application/json')
+        self.send_response(200)
         self.end_headers()
-        
-        response_data = {
-            "timestamp": now.isoformat(),
-            "status_text": text,
-            "success": success
-        }
-        self.wfile.write(json.dumps(response_data).encode('utf-8'))
+        self.wfile.write(b"Bot is running 24/7!")
+
+def run_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
+    server.serve_forever()
+
+if __name__ == "__main__":
+    # Chạy bot ở luồng riêng
+    t = threading.Thread(target=update_discord)
+    t.start()
+    
+    # Chạy server ở luồng chính
+    print("Server starting...")
+    run_server()
