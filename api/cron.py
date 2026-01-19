@@ -95,6 +95,7 @@ class DiscordClient:
             return False
 
         payload = {
+            "status": "dnd",
             "custom_status": {
                 "text": text,
                 "emoji_name": emoji
