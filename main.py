@@ -1,92 +1,96 @@
-import time
-import requests
-import threading
-from datetime import datetime, timezone, timedelta
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import discord
 import os
+import asyncio
+from datetime import datetime, timezone, timedelta
+from flask import Flask
+from threading import Thread
 
 # ================= CẤU HÌNH =================
-# Lấy token từ biến môi trường (Cài đặt sau trên Render)
 TOKEN = os.environ.get("DISCORD_TOKEN")
 TARGET_STR = "April, 03 2026 at 08:30 PM"
 DATE_FORMAT = "%B, %d %Y at %I:%M %p"
-# ============================================
 
-def get_countdown():
+# Khởi tạo Client (Mode giả lập người dùng)
+client = discord.Client()
+app = Flask(__name__)
+
+# ================= LOGIC TÍNH TOÁN =================
+def get_status_content():
     vn_tz = timezone(timedelta(hours=7))
     now = datetime.now(vn_tz)
     try:
         target = datetime.strptime(TARGET_STR, DATE_FORMAT).replace(tzinfo=vn_tz)
     except:
-        return "Lỗi định dạng ngày", "⚠️"
+        return "Lỗi ngày tháng"
         
     delta = target - now
-    
     if delta.total_seconds() <= 0:
-        return "Sự kiện đã bắt đầu!", "🎉"
+        return "Sự kiện đã bắt đầu! 🎉"
 
     days = delta.days
-    seconds = delta.seconds
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
+    hours = (delta.seconds // 3600)
+    minutes = (delta.seconds % 3600) // 60
     
-    # Logic Emoji
-    if days > 30: emoji = "🗓️"
-    elif days > 7: emoji = "⏳"
-    elif days > 0: emoji = "🔥"
-    else: emoji = "🚨"
+    # Text hiển thị
+    return f"Còn {days}d {hours}h {minutes}m"
+
+# ================= BACKGROUND TASK =================
+async def status_task():
+    """Vòng lặp chạy ngầm để cập nhật status"""
+    await client.wait_until_ready()
+    print(f"✅ Đã đăng nhập thành công vào: {client.user}")
     
-    return f"Còn {days}d {hours}h {minutes}m", emoji
-
-def update_discord():
-    while True:
-        if not TOKEN:
-            print("Chưa có Token!")
-            time.sleep(60)
-            continue
-
-        text, emoji = get_countdown()
-        
-        url = "https://discord.com/api/v9/users/@me/settings"
-        headers = {
-            "Authorization": TOKEN,
-            "Content-Type": "application/json"
-        }
-        # Thêm status: dnd để ép online
-        payload = {
-            "status": "dnd", 
-            "custom_status": {"text": text, "emoji_name": emoji}
-        }
-        
+    while not client.is_closed():
         try:
-            r = requests.patch(url, headers=headers, json=payload)
-            if r.status_code == 200:
-                print(f"Updated: {text}")
-            else:
-                print(f"Error {r.status_code}: {r.text}")
-        except Exception as e:
-            print(f"Lỗi mạng: {e}")
+            status_text = get_status_content()
             
-        # Chờ 60 giây (để tránh bị Discord khóa mõm vì spam)
-        time.sleep(60)
+            # Đổi Custom Status
+            # Lưu ý: discord.py-self dùng CustomActivity để set status chữ
+            activity = discord.CustomActivity(name=status_text)
+            
+            # status=discord.Status.dnd : Set trạng thái "Không làm phiền" (Đỏ)
+            # status=discord.Status.online : Set trạng thái "Online" (Xanh)
+            await client.change_presence(status=discord.Status.dnd, activity=activity)
+            
+            print(f"Updated: {status_text}")
+            
+            # Chờ 120s (2 phút) để an toàn, tránh bị Discord nghi ngờ
+            await asyncio.sleep(120) 
+            
+        except Exception as e:
+            print(f"❌ Lỗi update: {e}")
+            await asyncio.sleep(60)
 
-# ================= SERVER GIẢ (Để Render không tắt App) =================
-class SimpleHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running 24/7!")
+@client.event
+async def on_ready():
+    # Khi bot khởi động xong, chạy vòng lặp update
+    client.loop.create_task(status_task())
 
-def run_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
-    server.serve_forever()
+# ================= WEB SERVER (KEEP ALIVE) =================
+@app.route('/')
+def home():
+    if client.is_ready():
+        return f"Bot đang chạy trên acc: {client.user}", 200
+    return "Bot đang khởi động...", 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+def run_discord_bot():
+    if not TOKEN:
+        print("❌ Lỗi: Chưa có Token!")
+        return
+    try:
+        client.run(TOKEN)
+    except Exception as e:
+        print(f"❌ Lỗi Login: {e}")
+        # Nếu bị lỗi token không hợp lệ, cần check lại token
 
 if __name__ == "__main__":
-    # Chạy bot ở luồng riêng
-    t = threading.Thread(target=update_discord)
+    # Chạy Web Server ở luồng riêng
+    t = Thread(target=run_flask)
     t.start()
     
-    # Chạy server ở luồng chính
-    print("Server starting...")
-    run_server()
+    # Chạy Discord Bot ở luồng chính
+    run_discord_bot()
