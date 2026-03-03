@@ -1,4 +1,5 @@
 discord.py>=2.3.0
 flask>=3.0.0
 python-dotenv
-PyNaCl
+requests
+aiohttp
