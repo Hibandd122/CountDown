@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🤖 Bot Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="dashboard-card">
+        <div class="status-container">
+            <div class="status-dot"></div>
+            <span class="status-text" id="system-status">System Operational</span>
+        </div>
+        <h1>Bot: <span id="bot-user">{{ state.user }}</span></h1>
+        <div class="main-stat" id="bot-status">
+            {{ state.status }}
+        </div>
+        <div class="info-grid">
+            <div class="info-item">
+                <span class="info-label">Server Ping</span>
+                <span class="info-value" id="bot-ping" style="color: #4ade80;">{{ state.ping }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Last Checked</span>
+                <span class="info-value" id="bot-last-updated">{{ state.last_updated }}</span>
+            </div>
+        </div>
+        <!-- Proxy Info Section (new) -->
+        <div class="proxy-section">
+            <div class="proxy-header">🔌 Proxy Status</div>
+            <div class="proxy-details">
+                <div class="proxy-item">
+                    <span class="proxy-label">Current Proxy</span>
+                    <span class="proxy-value" id="proxy-url">Loading...</span>
+                </div>
+                <div class="proxy-item">
+                    <span class="proxy-label">Status</span>
+                    <span class="proxy-value" id="proxy-status">Unknown</span>
+                </div>
+                <div class="proxy-item">
+                    <span class="proxy-label">Last Check</span>
+                    <span class="proxy-value" id="proxy-last-check">N/A</span>
+                </div>
+            </div>
+        </div>
+        <div class="footer">
+            Target: {{ state.target[:20] }}... | Region: VN (GMT+7)
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
