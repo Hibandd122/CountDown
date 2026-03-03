@@ -4,3 +4,4 @@ python-dotenv
 requests
 aiohttp
 PyNaCl
+aiohttp==3.9.1
